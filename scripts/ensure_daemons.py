@@ -57,20 +57,37 @@ def is_pid_alive(pid: int) -> bool:
             return False
 
 
-def launch_detached(node_exe: str, script_path: Path):
-    kwargs = {
-        "cwd": str(script_path.parent.parent),
-        "stdin": subprocess.DEVNULL,
-        "stdout": subprocess.DEVNULL,
-        "stderr": subprocess.DEVNULL,
-    }
+def launch_detached(node_exe: str, script_path: Path, name: str = "daemon"):
     if platform.system() == "Windows":
-        # DETACHED_PROCESS (0x8) | CREATE_NEW_PROCESS_GROUP (0x200) | CREATE_NO_WINDOW (0x08000000)
-        kwargs["creationflags"] = 0x00000008 | 0x00000200 | 0x08000000
-    else:
-        kwargs["start_new_session"] = True
+        # Launching via explorer.exe -> .vbs escapes Antigravity/hook Windows Job Objects
+        # so the daemon is NOT killed when the hook or Antigravity restarts/updates.
+        import tempfile
+        vbs_path = Path(tempfile.gettempdir()) / f"agy_watchdog_{name}.vbs"
+        cwd_str = str(script_path.parent.parent).replace('"', '""')
+        node_str = str(node_exe).replace('"', '""')
+        script_str = str(script_path).replace('"', '""')
+        vbs_content = (
+            'Set WshShell = CreateObject("WScript.Shell")\r\n'
+            f'WshShell.CurrentDirectory = "{cwd_str}"\r\n'
+            f'WshShell.Run """{node_str}"" ""{script_str}""", 0, False\r\n'
+        )
+        vbs_path.write_text(vbs_content, encoding="ascii")
+        subprocess.Popen(
+            ["explorer.exe", str(vbs_path)],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return
 
-    subprocess.Popen([node_exe, str(script_path)], **kwargs)
+    subprocess.Popen(
+        [node_exe, str(script_path)],
+        cwd=str(script_path.parent.parent),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
 
 
 def main():
@@ -92,7 +109,7 @@ def main():
                 alive = False
         if not alive:
             try:
-                launch_detached(node_exe, script)
+                launch_detached(node_exe, script, d["name"])
             except Exception:
                 pass
     return 0
