@@ -26,6 +26,11 @@ DAEMONS = [
         "script": SKILLS_DIR / "antigravity-custom-theme" / "daemon" / "theme_daemon.js",
         "pid_file": SKILLS_DIR / "antigravity-custom-theme" / "daemon.pid",
     },
+    {
+        "name": "antigravity-gemini-extension",
+        "script": SKILLS_DIR / "antigravity-gemini-extension" / "daemon" / "bridge_topbar_daemon.js",
+        "pid_file": SKILLS_DIR / "antigravity-gemini-extension" / "bridge-topbar-daemon.pid",
+    },
 ]
 
 
