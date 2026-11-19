@@ -162,6 +162,35 @@ function broadcast(expr) {
   }
 }
 
+function pickFolder(startDir) {
+  return new Promise((resolve) => {
+    let cmd; let args;
+    if (process.platform === 'win32') {
+      const ps = [
+        'Add-Type -AssemblyName System.Windows.Forms',
+        '$f = New-Object System.Windows.Forms.FolderBrowserDialog',
+        "$f.Description = 'Chá»n thÆ° má»¥c lÆ°u Antigravity Sync (á»• tÃ¹y chá»n)'",
+        '$f.ShowNewFolderButton = $true',
+        `if ('${String(startDir || '').replace(/'/g, "''")}' -and (Test-Path '${String(startDir || '').replace(/'/g, "''")}')) { $f.SelectedPath = '${String(startDir || '').replace(/'/g, "''")}' }`,
+        '$top = New-Object System.Windows.Forms.Form; $top.TopMost = $true',
+        "if ($f.ShowDialog($top) -eq 'OK') { [Console]::OutputEncoding=[Text.Encoding]::UTF8; Write-Output $f.SelectedPath }",
+      ].join('; ');
+      cmd = 'powershell'; args = ['-NoProfile', '-STA', '-Command', ps];
+    } else if (process.platform === 'darwin') {
+      cmd = 'osascript'; args = ['-e', 'POSIX path of (choose folder)'];
+    } else {
+      cmd = 'zenity'; args = ['--file-selection', '--directory'];
+    }
+    let out = '';
+    try {
+      const c = spawn(cmd, args, { windowsHide: false });
+      c.stdout.on('data', (d) => { out += d.toString(); });
+      c.on('error', () => resolve(null));
+      c.on('close', () => resolve(out.trim().replace(/[\\/]+$/, '') || null));
+    } catch (_) { resolve(null); }
+  });
+}
+
 function runSyncEngine(action, extraArgs = []) {
   if (activeSyncPromise) return activeSyncPromise;
   activeSyncPromise = new Promise((resolve) => {
@@ -184,7 +213,7 @@ function runSyncEngine(action, extraArgs = []) {
       if (code === 0 && parsed && parsed.ok) {
         let summary = '';
         if (action === 'sync') {
-          summary = `Smart Sync: ↑${parsed.pushed_up || 0} ↓${parsed.pulled_down || 0}` + (parsed.pushed ? ' (pushed)' : ' (up to date)');
+          summary = `Smart Sync: â†‘${parsed.pushed_up || 0} â†“${parsed.pulled_down || 0}` + (parsed.pushed ? ' (pushed)' : ' (up to date)');
         } else if (action === 'set-location') {
           summary = `Storage: ${parsed.storage_dir}`;
         } else if (action === 'backup') {
@@ -238,6 +267,11 @@ function buildInjectedClientScript(initialState) {
   const stateJson = JSON.stringify(initialState);
   return `(() => {
     window.__AGY_SYN_STATE__ = ${stateJson};
+    // Replace any previously injected version (hot-upgrade without reloading the app)
+    ['agy-topbar-syn-btn', 'agy-topbar-syn-popover', 'agy-topbar-syn-style'].forEach((id) => document.getElementById(id)?.remove());
+    if (window.__AGY_SYN_TIMER__) clearInterval(window.__AGY_SYN_TIMER__);
+    if (window.__AGY_SYN_CLICK__) document.removeEventListener('click', window.__AGY_SYN_CLICK__);
+    window.__AGY_SYN_INIT__ = false;
 
     const BTN_ID = 'agy-topbar-syn-btn';
     const POP_ID = 'agy-topbar-syn-popover';
@@ -433,7 +467,7 @@ function buildInjectedClientScript(initialState) {
       const btn = document.getElementById(BTN_ID);
       if (!btn) return;
       const mins = (window.__AGY_SYN_STATE__ && window.__AGY_SYN_STATE__.autoSyncMinutes) || 0;
-      const nextText = mins > 0 ? 'Syn · ' + mins + 'm' : 'Syn';
+      const nextText = mins > 0 ? 'Syn Â· ' + mins + 'm' : 'Syn';
       const nextDisplay = mins > 0 ? 'inline-block' : 'none';
       const labelSpan = btn.querySelector('.syn-btn-label');
       const dot = btn.querySelector('.syn-auto-dot');
@@ -490,7 +524,7 @@ function buildInjectedClientScript(initialState) {
       if (res && res.ok) {
         let msg = '';
         if (res.action === 'sync') {
-          msg = 'Smart Sync: ↑' + (res.pushed_up || 0) + ' ↓' + (res.pulled_down || 0) + (res.pushed ? ' (pushed)' : ' (up to date)');
+          msg = 'Smart Sync: â†‘' + (res.pushed_up || 0) + ' â†“' + (res.pulled_down || 0) + (res.pushed ? ' (pushed)' : ' (up to date)');
         } else if (res.action === 'backup') {
           msg = res.pushed ? 'Backed up & pushed ' + res.copied_files + ' files!' : 'Already up to date (' + res.copied_files + ' files)';
         } else {
@@ -528,21 +562,21 @@ function buildInjectedClientScript(initialState) {
         <div class="syn-meta">Last sync: \${formatTime(s.lastSyncAt)}\${s.lastSummary ? '<br>' + s.lastSummary : ''}</div>
         <div class="syn-actions">
           <button class="syn-act" data-act="sync">
-            <span>🔄 Smart Sync Now (2-Way Merge)</span>
+            <span>ðŸ”„ Smart Sync Now (2-Way Merge)</span>
           </button>
           <button class="syn-act" data-act="backup">
-            <span>⬆ Force Full Backup</span>
+            <span>â¬† Force Full Backup</span>
           </button>
           <button class="syn-act" data-act="restore">
-            <span>⬇ Pull & Restore to Local</span>
+            <span>â¬‡ Pull & Restore to Local</span>
           </button>
           <button class="syn-act" data-act="open">
-            <span>↗ Open GitHub Backup Repo</span>
+            <span>â†— Open GitHub Backup Repo</span>
           </button>
         </div>
         <div class="syn-auto-box">
           <div class="syn-auto-label">
-            <span>⏱ Auto-Sync (phút / min)</span>
+            <span>â± Auto-Sync (phÃºt / min)</span>
             <span class="syn-auto-badge" style="color:#4ade80; font-weight:600;">\${mins > 0 ? 'Every ' + mins + 'm' : 'Off'}</span>
           </div>
           <div class="syn-presets">
@@ -552,25 +586,30 @@ function buildInjectedClientScript(initialState) {
             <button type="button" class="syn-pill" data-mins="30">30m</button>
           </div>
           <div class="syn-custom-row">
-            <input type="number" min="0" max="1440" placeholder="Phút..." class="syn-min-input" value="\${mins > 0 ? mins : ''}" />
+            <input type="number" min="0" max="1440" placeholder="PhÃºt..." class="syn-min-input" value="\${mins > 0 ? mins : ''}" />
             <button type="button" class="syn-set-btn">Set Auto-Sync</button>
           </div>
         </div>
         <div class="syn-auto-box">
           <div class="syn-auto-label">
-            <span>📁 Thư mục lưu (ổ tùy chọn)</span>
+            <span>ðŸ“ ThÆ° má»¥c lÆ°u (á»• tÃ¹y chá»n)</span>
           </div>
           <div class="syn-custom-row">
-            <input type="text" placeholder="D:\\AntigravitySync" class="syn-min-input syn-path-input" style="width:150px" value="" />
-            <button type="button" class="syn-set-btn syn-path-btn">Set</button>
+            <input type="text" placeholder="D:\\AntigravitySync" class="syn-min-input syn-path-input" style="width:118px" value="" />
+            <button type="button" class="syn-set-btn syn-browse-btn" style="flex:0 0 auto">Browseâ€¦</button>
+            <button type="button" class="syn-set-btn syn-path-btn" style="flex:0 0 auto">Set</button>
           </div>
-          <div style="font-size:10.5px;color:#a1a1aa;margin-top:5px;">Đường dẫn ảo luôn giữ tại ~/.gemini/antigravity-sync-repo</div>
+          <div style="font-size:10.5px;color:#a1a1aa;margin-top:5px;">ÄÆ°á»ng dáº«n áº£o luÃ´n giá»¯ táº¡i ~/.gemini/antigravity-sync-repo</div>
         </div>
         <div class="syn-status"></div>
       \`;
       document.body.appendChild(pop);
       const pathInput = pop.querySelector('.syn-path-input');
       pathInput.value = s.storageDir || '';
+      pop.querySelector('.syn-browse-btn').addEventListener('click', () => {
+        sendTrigger({ action: 'browse_location', current: pathInput.value.trim() });
+      });
+      window.__AGY_SYN_ON_PICKED__ = (p) => { if (p && pathInput.isConnected) pathInput.value = p; };
       pop.querySelector('.syn-path-btn').addEventListener('click', () => {
         const v = pathInput.value.trim();
         if (!v) return;
@@ -593,17 +632,17 @@ function buildInjectedClientScript(initialState) {
         const btn = e.currentTarget;
         if (btn.dataset.armed !== '1') {
           btn.dataset.armed = '1';
-          btn.querySelector('span').textContent = '⚠ Click again to confirm Restore';
+          btn.querySelector('span').textContent = 'âš  Click again to confirm Restore';
           setTimeout(() => {
             if (btn.isConnected) {
               btn.dataset.armed = '0';
-              btn.querySelector('span').textContent = '⬇ Pull & Restore to Local';
+              btn.querySelector('span').textContent = 'â¬‡ Pull & Restore to Local';
             }
           }, 4000);
           return;
         }
         btn.dataset.armed = '0';
-        btn.querySelector('span').textContent = '⬇ Pull & Restore to Local';
+        btn.querySelector('span').textContent = 'â¬‡ Pull & Restore to Local';
         setSyncing(true, 'Pulling & restoring from GitHub...', false);
         sendTrigger({ action: 'restore' });
       });
@@ -668,15 +707,16 @@ function buildInjectedClientScript(initialState) {
 
     if (!window.__AGY_SYN_INIT__) {
       window.__AGY_SYN_INIT__ = true;
-      document.addEventListener('click', (e) => {
+      window.__AGY_SYN_CLICK__ = (e) => {
         const pop = document.getElementById(POP_ID);
         const btn = document.getElementById(BTN_ID);
         if (pop && !pop.contains(e.target) && (!btn || !btn.contains(e.target))) {
           closePopover();
         }
-      });
+      };
+      document.addEventListener('click', window.__AGY_SYN_CLICK__);
       // Lightweight polling instead of subtree MutationObserver to avoid freezing React/Electron streaming
-      setInterval(ensureSynButton, 2500);
+      window.__AGY_SYN_TIMER__ = setInterval(ensureSynButton, 2500);
     }
 
     ensureSynButton();
@@ -730,6 +770,12 @@ function connectTarget(target) {
       if (payload.action === 'set_interval') {
         const st = scheduleAutoSync(payload.minutes);
         broadcast(`window.__AGY_SYN_ON_STATE__ && window.__AGY_SYN_ON_STATE__(${JSON.stringify(st)})`);
+        return;
+      }
+
+      if (payload.action === 'browse_location') {
+        const picked = await pickFolder(payload.current);
+        if (picked) broadcast(`window.__AGY_SYN_ON_PICKED__ && window.__AGY_SYN_ON_PICKED__(${JSON.stringify(picked)})`);
         return;
       }
 
