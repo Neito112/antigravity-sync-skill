@@ -1,0 +1,30 @@
+---
+name: antigravity-sync
+description: Backup and restore the entire Antigravity system (~/.gemini config, skills, plugins, projects, conversations, brain, knowledge, MCP configs) to/from a private GitHub repository, and manage the topbar "Syn" button daemon.
+---
+
+# Antigravity System Backup & Sync (`antigravity-sync`)
+
+Synchronizes the entire Antigravity environment (`~/.gemini/config`, `~/.gemini/antigravity`, `~/.gemini/antigravity-cli`, `~/.gemini/antigravity-ide`) with a private GitHub repository (`antigravity-system-backup`).
+
+## Capabilities
+
+- **Backup & Push (`backup`)**: Mirrors Antigravity data into `~/.gemini/antigravity-sync-repo`, automatically excludes transient caches/logs/binaries/`node_modules`/locked `.db-wal` files, gzip-chunks any file > 45 MB (to respect GitHub's 100 MB file limit), commits, and pushes to GitHub.
+- **Pull & Restore (`restore`)**: Clones or pulls the backup repo, reassembles chunked files, snapshots existing `config.json`, and restores all skills, plugins, conversations, brain artifacts, and settings to `~/.gemini/`.
+- **Topbar "Syn" Button (`daemon/syn_topbar_daemon.js`)**: Connects to Antigravity's CDP (`DevToolsActivePort`) and injects a native **"Syn"** button directly on the Antigravity topbar (`[data-testid="pane-titlebar-toolbar"]`).
+
+## Quick Commands
+
+### Backup to GitHub
+```bash
+python ~/.gemini/config/skills/antigravity-sync/scripts/sync_engine.py backup
+```
+
+### Restore on a New Machine
+```bash
+python ~/.gemini/config/skills/antigravity-sync/scripts/sync_engine.py restore --remote-url https://github.com/<USER>/antigravity-system-backup.git
+```
+
+### Install / Restart Topbar "Syn" Button
+- **Windows:** `powershell -ExecutionPolicy Bypass -File ~/.gemini/config/skills/antigravity-sync/scripts/install-win.ps1`
+- **macOS / Linux:** `bash ~/.gemini/config/skills/antigravity-sync/scripts/install-unix.sh`
