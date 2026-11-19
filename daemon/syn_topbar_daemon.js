@@ -119,6 +119,7 @@ function readState() {
     lastSummary: null,
     autoSyncMinutes: 0,
     remoteUrl: detectLocalRemoteUrl() || null,
+    storageDir: readStorageDir(),
   };
   try {
     if (fs.existsSync(STATE_FILE)) {
@@ -131,12 +132,20 @@ function readState() {
   return defaults;
 }
 
+function readStorageDir() {
+  try {
+    const cfg = path.join(ROOT_DIR, 'syn-config.json');
+    if (fs.existsSync(cfg)) return JSON.parse(fs.readFileSync(cfg, 'utf8')).storage_dir || null;
+  } catch (_) {}
+  return null;
+}
+
 function saveState(patch) {
   const next = { ...readState(), ...patch };
   try {
     fs.writeFileSync(STATE_FILE, JSON.stringify(next, null, 2), 'utf8');
   } catch (_) {}
-  return next;
+  return { ...next, storageDir: readStorageDir() };
 }
 
 function findPythonExe() {
@@ -153,11 +162,11 @@ function broadcast(expr) {
   }
 }
 
-function runSyncEngine(action) {
+function runSyncEngine(action, extraArgs = []) {
   if (activeSyncPromise) return activeSyncPromise;
   activeSyncPromise = new Promise((resolve) => {
     const py = findPythonExe();
-    const child = spawn(py, [ENGINE_PY, action, '--json'], {
+    const child = spawn(py, [ENGINE_PY, action, '--json', ...extraArgs], {
       cwd: ROOT_DIR,
       windowsHide: true,
     });
@@ -176,6 +185,8 @@ function runSyncEngine(action) {
         let summary = '';
         if (action === 'sync') {
           summary = `Smart Sync: ↑${parsed.pushed_up || 0} ↓${parsed.pulled_down || 0}` + (parsed.pushed ? ' (pushed)' : ' (up to date)');
+        } else if (action === 'set-location') {
+          summary = `Storage: ${parsed.storage_dir}`;
         } else if (action === 'backup') {
           summary = parsed.pushed ? `Pushed ${parsed.copied_files} files` : `Up to date (${parsed.copied_files} files)`;
         } else {
@@ -545,9 +556,27 @@ function buildInjectedClientScript(initialState) {
             <button type="button" class="syn-set-btn">Set Auto-Sync</button>
           </div>
         </div>
+        <div class="syn-auto-box">
+          <div class="syn-auto-label">
+            <span>📁 Thư mục lưu (ổ tùy chọn)</span>
+          </div>
+          <div class="syn-custom-row">
+            <input type="text" placeholder="D:\\AntigravitySync" class="syn-min-input syn-path-input" style="width:150px" value="" />
+            <button type="button" class="syn-set-btn syn-path-btn">Set</button>
+          </div>
+          <div style="font-size:10.5px;color:#a1a1aa;margin-top:5px;">Đường dẫn ảo luôn giữ tại ~/.gemini/antigravity-sync-repo</div>
+        </div>
         <div class="syn-status"></div>
       \`;
       document.body.appendChild(pop);
+      const pathInput = pop.querySelector('.syn-path-input');
+      pathInput.value = s.storageDir || '';
+      pop.querySelector('.syn-path-btn').addEventListener('click', () => {
+        const v = pathInput.value.trim();
+        if (!v) return;
+        setSyncing(true, 'Moving sync folder to ' + v + ' ...', false);
+        sendTrigger({ action: 'set_location', path: v });
+      });
       renderAutoSyncUI();
 
       pop.querySelector('[data-act="sync"]').addEventListener('click', () => {
@@ -701,6 +730,15 @@ function connectTarget(target) {
       if (payload.action === 'set_interval') {
         const st = scheduleAutoSync(payload.minutes);
         broadcast(`window.__AGY_SYN_ON_STATE__ && window.__AGY_SYN_ON_STATE__(${JSON.stringify(st)})`);
+        return;
+      }
+
+      if (payload.action === 'set_location') {
+        const dir = String(payload.path || '').trim();
+        if (!dir) return;
+        log(`Set storage location: ${dir}`);
+        const result = await runSyncEngine('set-location', ['--path', dir]);
+        broadcast(`window.__AGY_SYN_ON_RESULT__ && window.__AGY_SYN_ON_RESULT__(${JSON.stringify(result)})`);
         return;
       }
 

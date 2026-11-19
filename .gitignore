@@ -4,3 +4,5 @@ syn-state.json
 __pycache__/
 *.pyc
 .DS_Store
+syn-config.json
+syn-config.json

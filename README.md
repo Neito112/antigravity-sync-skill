@@ -38,3 +38,10 @@ python ~/.gemini/config/skills/antigravity-sync/scripts/sync_engine.py backup
 # Restore onto a new machine
 python ~/.gemini/config/skills/antigravity-sync/scripts/sync_engine.py restore
 ```
+
+## Custom storage drive (virtual path)
+Store the sync repo on any drive while `~/.gemini/antigravity-sync-repo` stays valid (NTFS junction on Windows, symlink on macOS/Linux):
+```bash
+python scripts/sync_engine.py set-location --path D:\AntigravitySync
+```
+Or use the folder field in the topbar **Syn** popover. Existing data is copied then removed from C: only after a successful copy. The choice is saved in `syn-config.json` (machine-local, not synced) and the link self-heals on each run; if the drive is missing it falls back to the standard path. On a new machine run `set-location` before the first sync/restore.

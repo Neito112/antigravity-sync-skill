@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """
 Antigravity System Backup & Sync Engine
 Mirrors ~/.gemini/{config,antigravity,antigravity-cli,antigravity-ide} into a Git repository,
@@ -82,6 +82,143 @@ def iter_appdata_files():
                         fp = Path(cur) / f
                         rel = fp.relative_to(root).as_posix()
                         yield f"{APPDATA_PREFIX}/{logical}/{rel}", fp
+
+
+# --- Custom storage drive for the sync repo, with a virtual link at the standard C: path ---
+SKILL_DIR = Path(__file__).resolve().parent.parent
+STORAGE_CONFIG = SKILL_DIR / "syn-config.json"
+
+
+def _norm(p) -> str:
+    return os.path.normcase(os.path.abspath(str(p)))
+
+
+def _is_link(p: Path) -> bool:
+    try:
+        if p.is_symlink():
+            return True
+        if hasattr(os.path, "isjunction") and os.path.isjunction(p):
+            return True
+    except OSError:
+        pass
+    return False
+
+
+def _rm_readonly(func, path, _exc):
+    os.chmod(path, 0o700)
+    func(path)
+
+
+def _safe_move_dir(src: Path, dst: Path):
+    """Copy then delete (cross-drive safe); clears read-only git objects; never deletes src if copy fails."""
+    shutil.copytree(str(src), str(dst), symlinks=True)
+    shutil.rmtree(str(src), onerror=_rm_readonly)
+
+
+def _remove_link(link: Path):
+    # rmdir removes a junction / dir symlink without touching its target
+    try:
+        os.rmdir(link)
+    except OSError:
+        link.unlink()
+
+
+def _create_link(link: Path, target: Path):
+    link.parent.mkdir(parents=True, exist_ok=True)
+    if platform.system() == "Windows":
+        res = subprocess.run(
+            ["cmd", "/c", "mklink", "/J", str(link), str(target)],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+        if res.returncode != 0:
+            raise RuntimeError(f"mklink /J failed: {res.stderr.strip() or res.stdout.strip()}")
+    else:
+        os.symlink(str(target), str(link), target_is_directory=True)
+
+
+def read_storage_dir() -> Path | None:
+    try:
+        if STORAGE_CONFIG.exists():
+            val = json.loads(STORAGE_CONFIG.read_text(encoding="utf-8")).get("storage_dir")
+            return Path(val) if val else None
+    except Exception:
+        pass
+    return None
+
+
+def ensure_storage_link():
+    """Self-heal: if a custom storage dir is configured, make sure the standard path links to it."""
+    target = read_storage_dir()
+    if not target:
+        return
+    link = DEFAULT_REPO_DIR
+    if _is_link(link) and _norm(os.path.realpath(link)) == _norm(target):
+        return
+    if link.exists() and not _is_link(link):
+        return  # real directory in place; do not touch (use set-location to migrate)
+    anchor = Path(target.anchor) if target.anchor else target
+    if not anchor.exists():
+        print(f"[antigravity-sync] WARNING: storage drive {anchor} not available; using standard path.", file=sys.stderr)
+        return
+    target.mkdir(parents=True, exist_ok=True)
+    if _is_link(link):
+        _remove_link(link)
+    _create_link(link, target)
+
+
+def cmd_set_location(args):
+    """Store the sync repo on a chosen drive/folder and link the standard C: path to it."""
+    target = Path(args.path).expanduser().resolve()
+    link = DEFAULT_REPO_DIR
+    if _norm(target) == _norm(link):
+        raise RuntimeError("Target equals the standard path; choose a different folder/drive.")
+    try:
+        target.relative_to(GEMINI_HOME.resolve())
+        raise RuntimeError("Target must be outside ~/.gemini.")
+    except ValueError:
+        pass
+
+    target_nonempty = target.exists() and any(target.iterdir())
+    moved = False
+
+    if link.exists() and not _is_link(link):
+        # Real directory at standard location -> migrate it
+        if target_nonempty:
+            raise RuntimeError(f"Target {target} is not empty; choose an empty folder.")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if target.exists():
+            target.rmdir()
+        _safe_move_dir(link, target)
+        moved = True
+    elif _is_link(link):
+        current = Path(os.path.realpath(link))
+        if _norm(current) != _norm(target):
+            if current.exists() and not target_nonempty:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                if target.exists():
+                    target.rmdir()
+                _safe_move_dir(current, target)
+                moved = True
+            elif not target_nonempty:
+                target.mkdir(parents=True, exist_ok=True)
+        _remove_link(link)
+    else:
+        target.mkdir(parents=True, exist_ok=True)  # adopt existing repo at target, or start empty
+
+    _create_link(link, target)
+    STORAGE_CONFIG.write_text(json.dumps({"storage_dir": str(target)}, indent=2), encoding="utf-8")
+
+    result = {
+        "ok": True,
+        "action": "set-location",
+        "storage_dir": str(target),
+        "virtual_path": str(link),
+        "moved_existing_data": moved,
+    }
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False))
+    else:
+        print(f"[antigravity-sync] Storage: {target}  <-  virtual path {link}")
 
 
 def resolve_local(rel) -> Path:
@@ -170,7 +307,7 @@ def should_exclude_file(rel_from_gemini: Path, file_name: str) -> bool:
         return True
     if any(tok in file_name for tok in EXCLUDE_FILE_CONTAINS):
         return True
-    if file_name in {"daemon.pid", "daemon.log", "syn-daemon.pid", "syn-daemon.log", "syn-state.json"}:
+    if file_name in {"daemon.pid", "daemon.log", "syn-daemon.pid", "syn-daemon.log", "syn-state.json", "syn-config.json"}:
         return True
     return False
 
@@ -801,8 +938,8 @@ def cmd_sync(args):
         print(json.dumps(result, ensure_ascii=False))
     else:
         print(
-            f"[antigravity-sync] Smart Sync complete: ↑{stats['pushed_up']} staged, "
-            f"↓{stats['pulled_down']} pulled, pushed={pushed}"
+            f"[antigravity-sync] Smart Sync complete: â†‘{stats['pushed_up']} staged, "
+            f"â†“{stats['pulled_down']} pulled, pushed={pushed}"
         )
 
 
@@ -831,17 +968,23 @@ def main():
     parser = argparse.ArgumentParser(description="Antigravity System Backup & Sync Engine")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    for name in ("backup", "restore", "sync", "resolve"):
+    for name in ("backup", "restore", "sync", "resolve", "set-location"):
         p = sub.add_parser(name)
         p.add_argument("--repo-dir", default=str(DEFAULT_REPO_DIR))
         p.add_argument("--repo-name", default=DEFAULT_REPO_NAME)
         p.add_argument("--json", action="store_true")
+        if name == "set-location":
+            p.add_argument("--path", required=True, help="Folder on any drive, e.g. D:\\AntigravitySync")
         if name == "restore":
             p.add_argument("--remote-url", default="")
 
     args = parser.parse_args()
     try:
-        if args.command == "backup":
+        if args.command in ("backup", "sync", "restore"):
+            ensure_storage_link()
+        if args.command == "set-location":
+            cmd_set_location(args)
+        elif args.command == "backup":
             cmd_backup(args)
         elif args.command == "sync":
             cmd_sync(args)

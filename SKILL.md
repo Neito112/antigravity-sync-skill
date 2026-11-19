@@ -36,3 +36,7 @@ python ~/.gemini/config/skills/antigravity-sync/scripts/sync_engine.py restore -
 ### Install / Restart Topbar "Syn" Button
 - **Windows:** `powershell -ExecutionPolicy Bypass -File ~/.gemini/config/skills/antigravity-sync/scripts/install-win.ps1`
 - **macOS / Linux:** `bash ~/.gemini/config/skills/antigravity-sync/scripts/install-unix.sh`
+
+### Store sync folder on another drive
+`python ~/.gemini/config/skills/antigravity-sync/scripts/sync_engine.py set-location --path D:\AntigravitySync`
+The standard path `~/.gemini/antigravity-sync-repo` remains as a junction/symlink to it. Run before first sync on a new machine.
