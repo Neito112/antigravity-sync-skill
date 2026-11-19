@@ -35,6 +35,65 @@ SOURCE_ROOTS = [
     "antigravity-ide",
 ]
 
+# --- App-level system settings living outside ~/.gemini (per-OS app-data dir) ---
+APPDATA_PREFIX = "_appdata"
+
+
+def _app_data_base() -> Path:
+    system = platform.system()
+    if system == "Windows":
+        return Path(os.environ.get("APPDATA") or (Path.home() / "AppData" / "Roaming"))
+    if system == "Darwin":
+        return Path.home() / "Library" / "Application Support"
+    return Path(os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config"))
+
+
+# logical name -> (folder under app-data base, whitelist of relative files/dirs to sync)
+# Machine-bound / secret / cache items (Local State, Network cookies, credential-user-scope,
+# Cache, Code Cache, GPUCache, Session Storage, logs, DevToolsActivePort, lockfile) are NOT synced.
+APPDATA_SOURCES = {
+    "Antigravity": {
+        "dir": "Antigravity",
+        "include": ["app_storage.json", "window_state.json", "Preferences", "Local Storage"],
+    },
+    "gemini": {
+        "dir": "gemini",
+        "include": ["settings.json"],
+    },
+}
+
+
+def iter_appdata_files():
+    """Yield (rel_key_posix, absolute_path) for whitelisted app-level settings files."""
+    base = _app_data_base()
+    for logical, spec in APPDATA_SOURCES.items():
+        root = base / spec["dir"]
+        if not root.exists():
+            continue
+        for item in spec["include"]:
+            p = root / item
+            if p.is_file():
+                yield f"{APPDATA_PREFIX}/{logical}/{item}", p
+            elif p.is_dir():
+                for cur, _dirs, files in os.walk(p):
+                    for f in files:
+                        if f.upper() == "LOCK":
+                            continue
+                        fp = Path(cur) / f
+                        rel = fp.relative_to(root).as_posix()
+                        yield f"{APPDATA_PREFIX}/{logical}/{rel}", fp
+
+
+def resolve_local(rel) -> Path:
+    """Map a repo-relative key back to the real local path on this machine/OS."""
+    rel_posix = Path(rel).as_posix()
+    parts = rel_posix.split("/")
+    if parts and parts[0] == APPDATA_PREFIX and len(parts) >= 3:
+        spec = APPDATA_SOURCES.get(parts[1])
+        if spec:
+            return _app_data_base() / spec["dir"] / Path(*parts[2:])
+    return GEMINI_HOME / rel_posix
+
 # Relative directory names to exclude anywhere under a source root
 EXCLUDE_DIR_NAMES = {
     ".git",
@@ -222,6 +281,16 @@ def stage_backup(repo_dir: Path) -> dict:
                     skipped_locked.append(rel_file.as_posix())
                 except OSError as e:
                     skipped_locked.append(f"{rel_file.as_posix()} ({e})")
+
+    # App-level system settings stored outside ~/.gemini
+    for rel_key, src_file in iter_appdata_files():
+        dst_file = data_root / rel_key
+        try:
+            dst_file.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src_file, dst_file)
+            copied_files += 1
+        except (PermissionError, OSError) as e:
+            skipped_locked.append(f"{rel_key} ({e})")
 
     manifest = {
         "schema_version": 1,
@@ -493,7 +562,7 @@ def cmd_restore(args):
                 chunk_groups.setdefault(target_rel, []).append(src_file)
                 continue
 
-            dst_file = GEMINI_HOME / rel_dir / fname
+            dst_file = resolve_local(rel_dir / fname)
             try:
                 dst_file.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(src_file, dst_file)
@@ -502,7 +571,7 @@ def cmd_restore(args):
                 skipped_locked.append(f"{(rel_dir / fname).as_posix()} ({e})")
 
     for target_rel, parts in chunk_groups.items():
-        dst_file = GEMINI_HOME / target_rel
+        dst_file = resolve_local(target_rel)
         try:
             reassemble_chunked_gzip(parts, dst_file)
             restored += 1
@@ -570,6 +639,9 @@ def _merge_two_way(repo_dir: Path) -> dict:
                 if not should_exclude_file(rel_file, fname):
                     local_files[rel_file.as_posix()] = cur_path / fname
 
+    for rel_key, p in iter_appdata_files():
+        local_files[rel_key] = p
+
     # 2. Index remote files in repo/data (grouping .agychunk.* under base rel path)
     remote_plain: dict[str, Path] = {}
     remote_chunks: dict[str, list[Path]] = {}
@@ -606,7 +678,7 @@ def _merge_two_way(repo_dir: Path) -> dict:
                 skipped_locked.append(f"{rel_key} ({e})")
         elif has_remote and not l_path:
             # Created on the other machine -> pull to local
-            dst = GEMINI_HOME / rel_key
+            dst = resolve_local(rel_key)
             try:
                 if r_parts:
                     reassemble_chunked_gzip(r_parts, dst)
