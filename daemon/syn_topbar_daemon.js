@@ -93,17 +93,39 @@ function removePidLock() {
   } catch (_) {}
 }
 
+function normalizeRepoUrl(url) {
+  if (!url || typeof url !== 'string') return null;
+  return url.trim().replace(/\.git$/i, '');
+}
+
+function detectLocalRemoteUrl() {
+  try {
+    const gitConfig = path.join(os.homedir(), '.gemini', 'antigravity-sync-repo', '.git', 'config');
+    if (!fs.existsSync(gitConfig)) return null;
+    const raw = fs.readFileSync(gitConfig, 'utf8');
+    const originBlock = raw.match(/\[remote "origin"\][\s\S]*?(?=\n\[|$)/i);
+    if (!originBlock) return null;
+    const urlMatch = originBlock[0].match(/^\s*url\s*=\s*(.+)$/m);
+    return urlMatch ? normalizeRepoUrl(urlMatch[1]) : null;
+  } catch (_) {
+    return null;
+  }
+}
+
 function readState() {
   const defaults = {
     lastSyncAt: null,
     lastAction: null,
     lastSummary: null,
     autoSyncMinutes: 0,
-    remoteUrl: 'https://github.com/Neito112/antigravity-system-backup',
+    remoteUrl: detectLocalRemoteUrl() || null,
   };
   try {
     if (fs.existsSync(STATE_FILE)) {
-      return { ...defaults, ...JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')) };
+      const parsed = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
+      const merged = { ...defaults, ...parsed };
+      if (!merged.remoteUrl) merged.remoteUrl = detectLocalRemoteUrl() || null;
+      return merged;
     }
   } catch (_) {}
   return defaults;
@@ -163,7 +185,7 @@ function runSyncEngine(action) {
           lastSyncAt: new Date().toISOString(),
           lastAction: action,
           lastSummary: summary,
-          remoteUrl: parsed.remote_url || readState().remoteUrl,
+          remoteUrl: normalizeRepoUrl(parsed.remote_url) || readState().remoteUrl,
         });
         resolve({ ...parsed, state: st });
       } else {
@@ -558,7 +580,7 @@ function buildInjectedClientScript(initialState) {
       });
 
       pop.querySelector('[data-act="open"]').addEventListener('click', () => {
-        const url = (window.__AGY_SYN_STATE__ && window.__AGY_SYN_STATE__.remoteUrl) || 'https://github.com/Neito112/antigravity-system-backup';
+        const url = (window.__AGY_SYN_STATE__ && window.__AGY_SYN_STATE__.remoteUrl) || 'https://github.com';
         window.open(url, '_blank');
         closePopover();
       });

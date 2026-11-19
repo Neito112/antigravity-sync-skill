@@ -9,14 +9,22 @@ Synchronizes the entire Antigravity environment (`~/.gemini/config`, `~/.gemini/
 
 ## Capabilities
 
+- **Existing Private Repo Reuse (`resolve` / `ensure_git_repo`)**: Automatically inspects the linked GitHub account (`gh`) for an existing private Antigravity backup repository (matching default name, `antigravity-sync-backup` topic, description, or backup naming) and reuses it directly; only creates a new `--private` repo if none exists.
+- **Conflict-Free Smart Sync (`sync`)**: Pulls before pushing, merges 2-way non-destructively (union + newer-mtime-wins), skips active SQLite WAL locks, and retries concurrent pushes.
 - **Backup & Push (`backup`)**: Mirrors Antigravity data into `~/.gemini/antigravity-sync-repo`, automatically excludes transient caches/logs/binaries/`node_modules`/locked `.db-wal` files, gzip-chunks any file > 45 MB (to respect GitHub's 100 MB file limit), commits, and pushes to GitHub.
 - **Pull & Restore (`restore`)**: Clones or pulls the backup repo, reassembles chunked files, snapshots existing `config.json`, and restores all skills, plugins, conversations, brain artifacts, and settings to `~/.gemini/`.
 - **Topbar "Syn" Button (`daemon/syn_topbar_daemon.js`)**: Connects to Antigravity's CDP (`DevToolsActivePort`) and injects a native **"Syn"** button directly on the Antigravity topbar (`[data-testid="pane-titlebar-toolbar"]`).
 
 ## Quick Commands
 
-### Backup to GitHub
+### Check Existing Private Backup Repo
 ```bash
+python ~/.gemini/config/skills/antigravity-sync/scripts/sync_engine.py resolve --json
+```
+
+### 2-Way Smart Sync / Backup to GitHub
+```bash
+python ~/.gemini/config/skills/antigravity-sync/scripts/sync_engine.py sync
 python ~/.gemini/config/skills/antigravity-sync/scripts/sync_engine.py backup
 ```
 

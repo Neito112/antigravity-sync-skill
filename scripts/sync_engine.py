@@ -23,6 +23,8 @@ from pathlib import Path
 GEMINI_HOME = Path.home() / ".gemini"
 DEFAULT_REPO_DIR = GEMINI_HOME / "antigravity-sync-repo"
 DEFAULT_REPO_NAME = "antigravity-system-backup"
+BACKUP_REPO_TOPIC = "antigravity-sync-backup"
+BACKUP_REPO_DESC = "Full backup of Antigravity system data (skills, plugins, conversations, brain, configs) with human & agent restore guide."
 CHUNK_THRESHOLD_BYTES = 45 * 1024 * 1024  # 45 MB
 CHUNK_SIZE_BYTES = 40 * 1024 * 1024       # 40 MB per chunk after gzip
 
@@ -238,50 +240,180 @@ def stage_backup(repo_dir: Path) -> dict:
     return manifest
 
 
-def ensure_git_repo(repo_dir: Path, repo_name: str) -> str:
-    repo_dir.mkdir(parents=True, exist_ok=True)
-    if not (repo_dir / ".git").exists():
-        run_cmd(["git", "init", "-b", "main"], cwd=repo_dir)
+def _extract_topic_names(repo_obj: dict) -> set[str]:
+    topics = set()
+    for item in (repo_obj.get("repositoryTopics") or []):
+        if isinstance(item, dict):
+            name = item.get("name")
+        elif isinstance(item, str):
+            name = item
+        else:
+            name = None
+        if name:
+            topics.add(name.lower())
+    return topics
 
-    # Ensure git author identity is configured locally if missing globally
+
+def discover_existing_private_backup_repo(gh_user: str, preferred_name: str) -> dict | None:
+    """Find an existing Antigravity backup repo on the linked GitHub account and ensure it is private."""
+    full_repo = f"{gh_user}/{preferred_name}"
+    view_res = run_cmd(
+        ["gh", "repo", "view", full_repo, "--json", "name,nameWithOwner,url,isPrivate"],
+        check=False,
+    )
+    if view_res.returncode == 0:
+        try:
+            info = json.loads(view_res.stdout or "{}")
+            if info.get("isPrivate") is False:
+                run_cmd(
+                    ["gh", "repo", "edit", full_repo, "--visibility", "private", "--accept-visibility-change-consequences"],
+                    check=False,
+                )
+            nwo = info.get("nameWithOwner") or full_repo
+            url = info.get("url") or f"https://github.com/{nwo}"
+            return {"nameWithOwner": nwo, "url": url, "isPrivate": True}
+        except Exception:
+            pass
+
+    list_res = run_cmd(
+        [
+            "gh", "repo", "list", gh_user,
+            "--visibility", "private",
+            "--limit", "100",
+            "--json", "name,nameWithOwner,description,url,isPrivate,repositoryTopics",
+        ],
+        check=False,
+    )
+    if list_res.returncode != 0 or not list_res.stdout.strip():
+        return None
+
+    try:
+        repos = json.loads(list_res.stdout)
+    except Exception:
+        return None
+
+    candidates = []
+    for r in repos:
+        if r.get("isPrivate") is not True:
+            continue
+        name_lower = (r.get("name") or "").lower()
+        if name_lower in {"antigravity-sync-skill", "antigravity-custom-theme-skill"} or name_lower.endswith("-skill"):
+            continue
+        topics = _extract_topic_names(r)
+        desc_lower = (r.get("description") or "").lower()
+
+        priority = None
+        if BACKUP_REPO_TOPIC in topics:
+            priority = 0
+        elif "antigravity system data" in desc_lower or "antigravity backup" in desc_lower:
+            priority = 1
+        elif "antigravity" in name_lower and ("backup" in name_lower or "sync" in name_lower):
+            priority = 2
+
+        if priority is not None:
+            candidates.append((priority, r))
+
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda pair: pair[0])
+    chosen = candidates[0][1]
+    nwo = chosen.get("nameWithOwner") or f"{gh_user}/{chosen.get('name')}"
+    url = chosen.get("url") or f"https://github.com/{nwo}"
+    return {"nameWithOwner": nwo, "url": url, "isPrivate": True}
+
+
+def _ensure_git_identity(repo_dir: Path, gh_user: str):
     name_res = run_cmd(["git", "config", "user.name"], cwd=repo_dir, check=False)
     email_res = run_cmd(["git", "config", "user.email"], cwd=repo_dir, check=False)
-    if not name_res.stdout.strip() or not email_res.stdout.strip():
-        gh_login = run_cmd(["gh", "api", "user", "--jq", ".login"], check=False).stdout.strip() or "antigravity-sync"
-        if not name_res.stdout.strip():
-            run_cmd(["git", "config", "user.name", gh_login], cwd=repo_dir)
-        if not email_res.stdout.strip():
-            run_cmd(["git", "config", "user.email", f"{gh_login}@users.noreply.github.com"], cwd=repo_dir)
+    if not name_res.stdout.strip():
+        run_cmd(["git", "config", "user.name", gh_user or "antigravity-sync"], cwd=repo_dir)
+    if not email_res.stdout.strip():
+        login = gh_user or "antigravity-sync"
+        run_cmd(["git", "config", "user.email", f"{login}@users.noreply.github.com"], cwd=repo_dir)
 
-    # Ensure remote origin exists
-    remote_res = run_cmd(["git", "remote", "get-url", "origin"], cwd=repo_dir, check=False)
-    if remote_res.returncode != 0 or not remote_res.stdout.strip():
-        # Check if GitHub repo exists via gh
-        gh_user = run_cmd(["gh", "api", "user", "--jq", ".login"], check=True).stdout.strip()
-        full_repo = f"{gh_user}/{repo_name}"
-        view_res = run_cmd(["gh", "repo", "view", full_repo, "--json", "isPrivate"], check=False)
-        if view_res.returncode != 0:
-            run_cmd([
-                "gh", "repo", "create", full_repo,
-                "--private",
-                "--description", "Full backup of Antigravity system data (skills, plugins, conversations, brain, configs) with human & agent restore guide."
-            ])
-        else:
-            try:
-                info = json.loads(view_res.stdout or "{}")
-                if info.get("isPrivate") is False:
-                    run_cmd(["gh", "repo", "edit", full_repo, "--visibility", "private", "--accept-visibility-change-consequences"], check=False)
-            except Exception:
-                pass
-        remote_url = f"https://github.com/{full_repo}.git"
+
+def _set_remote_origin(repo_dir: Path, remote_url: str):
+    cur = run_cmd(["git", "remote", "get-url", "origin"], cwd=repo_dir, check=False)
+    if cur.returncode == 0:
+        run_cmd(["git", "remote", "set-url", "origin", remote_url], cwd=repo_dir)
+    else:
         run_cmd(["git", "remote", "add", "origin", remote_url], cwd=repo_dir)
-        return remote_url
-    return remote_res.stdout.strip()
+
+
+def _create_private_backup_repo(gh_user: str, repo_name: str) -> str:
+    full_repo = f"{gh_user}/{repo_name}"
+    run_cmd([
+        "gh", "repo", "create", full_repo,
+        "--private",
+        "--description", BACKUP_REPO_DESC,
+    ])
+    run_cmd(["gh", "repo", "edit", full_repo, "--add-topic", BACKUP_REPO_TOPIC], check=False)
+    return f"https://github.com/{full_repo}.git"
+
+
+def ensure_git_repo(repo_dir: Path, repo_name: str) -> tuple[str, bool]:
+    """Ensure local git repo is connected to an existing private backup repo (reused) or creates one."""
+    gh_user = run_cmd(["gh", "api", "user", "--jq", ".login"], check=True).stdout.strip()
+
+    if (repo_dir / ".git").exists():
+        origin = run_cmd(["git", "remote", "get-url", "origin"], cwd=repo_dir, check=False).stdout.strip()
+        user_lower = gh_user.lower()
+        origin_lower = origin.lower()
+        if origin and (f"/{user_lower}/" in origin_lower or f":{user_lower}/" in origin_lower):
+            _ensure_git_identity(repo_dir, gh_user)
+            return origin, True
+
+        found = discover_existing_private_backup_repo(gh_user, repo_name)
+        if found:
+            remote_url = f"https://github.com/{found['nameWithOwner']}.git"
+            reused = True
+        else:
+            remote_url = _create_private_backup_repo(gh_user, repo_name)
+            reused = False
+        _set_remote_origin(repo_dir, remote_url)
+        _ensure_git_identity(repo_dir, gh_user)
+        return remote_url, reused
+
+    found = discover_existing_private_backup_repo(gh_user, repo_name)
+    if found:
+        reused = True
+        remote_url = f"https://github.com/{found['nameWithOwner']}.git"
+        is_empty_dir = (not repo_dir.exists()) or (not any(repo_dir.iterdir()))
+        if is_empty_dir:
+            repo_dir.parent.mkdir(parents=True, exist_ok=True)
+            run_cmd(["git", "clone", remote_url, str(repo_dir)])
+            head_res = run_cmd(["git", "rev-parse", "--verify", "HEAD"], cwd=repo_dir, check=False)
+            if head_res.returncode != 0:
+                run_cmd(["git", "checkout", "-B", "main"], cwd=repo_dir, check=False)
+        else:
+            run_cmd(["git", "init", "-b", "main"], cwd=repo_dir)
+            _set_remote_origin(repo_dir, remote_url)
+            run_cmd(["git", "fetch", "origin", "main"], cwd=repo_dir, check=False)
+            has_remote_main = run_cmd(
+                ["git", "rev-parse", "--verify", "origin/main"], cwd=repo_dir, check=False
+            ).returncode == 0
+            if has_remote_main:
+                run_cmd(["git", "reset", "--mixed", "origin/main"], cwd=repo_dir, check=False)
+    else:
+        reused = False
+        remote_url = _create_private_backup_repo(gh_user, repo_name)
+        repo_dir.mkdir(parents=True, exist_ok=True)
+        run_cmd(["git", "init", "-b", "main"], cwd=repo_dir)
+        _set_remote_origin(repo_dir, remote_url)
+
+    _ensure_git_identity(repo_dir, gh_user)
+    return remote_url, reused
 
 
 def cmd_backup(args):
     repo_dir = Path(args.repo_dir).expanduser().resolve()
-    remote_url = ensure_git_repo(repo_dir, args.repo_name)
+    remote_url, reused_repo = ensure_git_repo(repo_dir, args.repo_name)
+    ls_remote = run_cmd(["git", "ls-remote", "--heads", "origin", "main"], cwd=repo_dir, check=False)
+    if ls_remote.stdout.strip():
+        run_cmd(["git", "fetch", "origin", "main"], cwd=repo_dir, check=False)
+        run_cmd(["git", "pull", "--rebase", "--autostash", "origin", "main"], cwd=repo_dir, check=False)
+
     manifest = stage_backup(repo_dir)
 
     run_cmd(["git", "add", "-A"], cwd=repo_dir)
@@ -304,6 +436,7 @@ def cmd_backup(args):
         "ok": True,
         "action": "backup",
         "pushed": pushed,
+        "reused_existing_repo": reused_repo,
         "remote_url": remote_url,
         "repo_dir": str(repo_dir),
         "copied_files": manifest["copied_files"],
@@ -325,7 +458,11 @@ def cmd_restore(args):
     if not (repo_dir / ".git").exists():
         if not args.remote_url:
             gh_user = run_cmd(["gh", "api", "user", "--jq", ".login"], check=True).stdout.strip()
-            args.remote_url = f"https://github.com/{gh_user}/{args.repo_name}.git"
+            found = discover_existing_private_backup_repo(gh_user, args.repo_name)
+            if found:
+                args.remote_url = f"https://github.com/{found['nameWithOwner']}.git"
+            else:
+                args.remote_url = f"https://github.com/{gh_user}/{args.repo_name}.git"
         repo_dir.parent.mkdir(parents=True, exist_ok=True)
         run_cmd(["git", "clone", args.remote_url, str(repo_dir)])
     else:
@@ -539,7 +676,7 @@ def _merge_two_way(repo_dir: Path) -> dict:
 def cmd_sync(args):
     """Conflict-free 2-way smart sync with pull-before-push & automatic retry."""
     repo_dir = Path(args.repo_dir).expanduser().resolve()
-    remote_url = ensure_git_repo(repo_dir, args.repo_name)
+    remote_url, reused_repo = ensure_git_repo(repo_dir, args.repo_name)
 
     stats = {"pushed_up": 0, "pulled_down": 0, "local_files": 0, "skipped_locked": []}
     pushed = False
@@ -579,6 +716,7 @@ def cmd_sync(args):
         "ok": True,
         "action": "sync",
         "pushed": pushed,
+        "reused_existing_repo": reused_repo,
         "remote_url": remote_url,
         "repo_dir": str(repo_dir),
         "pushed_up": stats["pushed_up"],
@@ -596,11 +734,32 @@ def cmd_sync(args):
         )
 
 
+def cmd_resolve(args):
+    """Read-only discovery of an existing private backup repo on the linked GitHub account."""
+    gh_user = run_cmd(["gh", "api", "user", "--jq", ".login"], check=True).stdout.strip()
+    found = discover_existing_private_backup_repo(gh_user, args.repo_name)
+    result = {
+        "ok": True,
+        "action": "resolve",
+        "gh_user": gh_user,
+        "found": bool(found),
+        "nameWithOwner": found["nameWithOwner"] if found else None,
+        "remote_url": f"https://github.com/{found['nameWithOwner']}.git" if found else None,
+    }
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False))
+    else:
+        if found:
+            print(f"[antigravity-sync] Found existing private repo: {found['nameWithOwner']} ({result['remote_url']})")
+        else:
+            print(f"[antigravity-sync] No existing private backup repo found for {gh_user}.")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Antigravity System Backup & Sync Engine")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    for name in ("backup", "restore", "sync"):
+    for name in ("backup", "restore", "sync", "resolve"):
         p = sub.add_parser(name)
         p.add_argument("--repo-dir", default=str(DEFAULT_REPO_DIR))
         p.add_argument("--repo-name", default=DEFAULT_REPO_NAME)
@@ -614,6 +773,8 @@ def main():
             cmd_backup(args)
         elif args.command == "sync":
             cmd_sync(args)
+        elif args.command == "resolve":
+            cmd_resolve(args)
         else:
             cmd_restore(args)
     except Exception as exc:
