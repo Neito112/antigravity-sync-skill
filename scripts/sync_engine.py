@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 Antigravity System Backup & Sync Engine
 Mirrors ~/.gemini/{config,antigravity,antigravity-cli,antigravity-ide} into a Git repository,
@@ -938,8 +938,8 @@ def cmd_sync(args):
         print(json.dumps(result, ensure_ascii=False))
     else:
         print(
-            f"[antigravity-sync] Smart Sync complete: â†‘{stats['pushed_up']} staged, "
-            f"â†“{stats['pulled_down']} pulled, pushed={pushed}"
+            f"[antigravity-sync] Smart Sync complete: ↑{stats['pushed_up']} staged, "
+            f"↓{stats['pulled_down']} pulled, pushed={pushed}"
         )
 
 

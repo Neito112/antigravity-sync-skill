@@ -169,7 +169,7 @@ function pickFolder(startDir) {
       const ps = [
         'Add-Type -AssemblyName System.Windows.Forms',
         '$f = New-Object System.Windows.Forms.FolderBrowserDialog',
-        "$f.Description = 'Chá»n thÆ° má»¥c lÆ°u Antigravity Sync (á»• tÃ¹y chá»n)'",
+        "$f.Description = 'Chọn thư mục lưu Antigravity Sync (ổ tùy chọn)'",
         '$f.ShowNewFolderButton = $true',
         `if ('${String(startDir || '').replace(/'/g, "''")}' -and (Test-Path '${String(startDir || '').replace(/'/g, "''")}')) { $f.SelectedPath = '${String(startDir || '').replace(/'/g, "''")}' }`,
         '$top = New-Object System.Windows.Forms.Form; $top.TopMost = $true',
@@ -213,7 +213,7 @@ function runSyncEngine(action, extraArgs = []) {
       if (code === 0 && parsed && parsed.ok) {
         let summary = '';
         if (action === 'sync') {
-          summary = `Smart Sync: â†‘${parsed.pushed_up || 0} â†“${parsed.pulled_down || 0}` + (parsed.pushed ? ' (pushed)' : ' (up to date)');
+          summary = `Smart Sync: ↑${parsed.pushed_up || 0} ↓${parsed.pulled_down || 0}` + (parsed.pushed ? ' (pushed)' : ' (up to date)');
         } else if (action === 'set-location') {
           summary = `Storage: ${parsed.storage_dir}`;
         } else if (action === 'backup') {
@@ -467,7 +467,7 @@ function buildInjectedClientScript(initialState) {
       const btn = document.getElementById(BTN_ID);
       if (!btn) return;
       const mins = (window.__AGY_SYN_STATE__ && window.__AGY_SYN_STATE__.autoSyncMinutes) || 0;
-      const nextText = mins > 0 ? 'Syn Â· ' + mins + 'm' : 'Syn';
+      const nextText = mins > 0 ? 'Syn · ' + mins + 'm' : 'Syn';
       const nextDisplay = mins > 0 ? 'inline-block' : 'none';
       const labelSpan = btn.querySelector('.syn-btn-label');
       const dot = btn.querySelector('.syn-auto-dot');
@@ -524,7 +524,7 @@ function buildInjectedClientScript(initialState) {
       if (res && res.ok) {
         let msg = '';
         if (res.action === 'sync') {
-          msg = 'Smart Sync: â†‘' + (res.pushed_up || 0) + ' â†“' + (res.pulled_down || 0) + (res.pushed ? ' (pushed)' : ' (up to date)');
+          msg = 'Smart Sync: ↑' + (res.pushed_up || 0) + ' ↓' + (res.pulled_down || 0) + (res.pushed ? ' (pushed)' : ' (up to date)');
         } else if (res.action === 'backup') {
           msg = res.pushed ? 'Backed up & pushed ' + res.copied_files + ' files!' : 'Already up to date (' + res.copied_files + ' files)';
         } else {
@@ -562,21 +562,21 @@ function buildInjectedClientScript(initialState) {
         <div class="syn-meta">Last sync: \${formatTime(s.lastSyncAt)}\${s.lastSummary ? '<br>' + s.lastSummary : ''}</div>
         <div class="syn-actions">
           <button class="syn-act" data-act="sync">
-            <span>ðŸ”„ Smart Sync Now (2-Way Merge)</span>
+            <span>🔄 Smart Sync Now (2-Way Merge)</span>
           </button>
           <button class="syn-act" data-act="backup">
-            <span>â¬† Force Full Backup</span>
+            <span>⬆ Force Full Backup</span>
           </button>
           <button class="syn-act" data-act="restore">
-            <span>â¬‡ Pull & Restore to Local</span>
+            <span>⬇ Pull & Restore to Local</span>
           </button>
           <button class="syn-act" data-act="open">
-            <span>â†— Open GitHub Backup Repo</span>
+            <span>↗ Open GitHub Backup Repo</span>
           </button>
         </div>
         <div class="syn-auto-box">
           <div class="syn-auto-label">
-            <span>â± Auto-Sync (phÃºt / min)</span>
+            <span>⏱ Auto-Sync (phút / min)</span>
             <span class="syn-auto-badge" style="color:#4ade80; font-weight:600;">\${mins > 0 ? 'Every ' + mins + 'm' : 'Off'}</span>
           </div>
           <div class="syn-presets">
@@ -586,20 +586,20 @@ function buildInjectedClientScript(initialState) {
             <button type="button" class="syn-pill" data-mins="30">30m</button>
           </div>
           <div class="syn-custom-row">
-            <input type="number" min="0" max="1440" placeholder="PhÃºt..." class="syn-min-input" value="\${mins > 0 ? mins : ''}" />
+            <input type="number" min="0" max="1440" placeholder="Phút..." class="syn-min-input" value="\${mins > 0 ? mins : ''}" />
             <button type="button" class="syn-set-btn">Set Auto-Sync</button>
           </div>
         </div>
         <div class="syn-auto-box">
           <div class="syn-auto-label">
-            <span>ðŸ“ ThÆ° má»¥c lÆ°u (á»• tÃ¹y chá»n)</span>
+            <span>📁 Thư mục lưu (ổ tùy chọn)</span>
           </div>
           <div class="syn-custom-row">
             <input type="text" placeholder="D:\\AntigravitySync" class="syn-min-input syn-path-input" style="width:118px" value="" />
-            <button type="button" class="syn-set-btn syn-browse-btn" style="flex:0 0 auto">Browseâ€¦</button>
+            <button type="button" class="syn-set-btn syn-browse-btn" style="flex:0 0 auto">Browse…</button>
             <button type="button" class="syn-set-btn syn-path-btn" style="flex:0 0 auto">Set</button>
           </div>
-          <div style="font-size:10.5px;color:#a1a1aa;margin-top:5px;">ÄÆ°á»ng dáº«n áº£o luÃ´n giá»¯ táº¡i ~/.gemini/antigravity-sync-repo</div>
+          <div style="font-size:10.5px;color:#a1a1aa;margin-top:5px;">Đường dẫn ảo luôn giữ tại ~/.gemini/antigravity-sync-repo</div>
         </div>
         <div class="syn-status"></div>
       \`;
@@ -632,17 +632,17 @@ function buildInjectedClientScript(initialState) {
         const btn = e.currentTarget;
         if (btn.dataset.armed !== '1') {
           btn.dataset.armed = '1';
-          btn.querySelector('span').textContent = 'âš  Click again to confirm Restore';
+          btn.querySelector('span').textContent = '⚠ Click again to confirm Restore';
           setTimeout(() => {
             if (btn.isConnected) {
               btn.dataset.armed = '0';
-              btn.querySelector('span').textContent = 'â¬‡ Pull & Restore to Local';
+              btn.querySelector('span').textContent = '⬇ Pull & Restore to Local';
             }
           }, 4000);
           return;
         }
         btn.dataset.armed = '0';
-        btn.querySelector('span').textContent = 'â¬‡ Pull & Restore to Local';
+        btn.querySelector('span').textContent = '⬇ Pull & Restore to Local';
         setSyncing(true, 'Pulling & restoring from GitHub...', false);
         sendTrigger({ action: 'restore' });
       });
